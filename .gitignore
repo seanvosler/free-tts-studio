@@ -1,0 +1,29 @@
+# Virtual env
+.venv/
+venv/
+env/
+
+# Python cache / build
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+
+# Runtime artifacts
+output/
+*.wav
+output/*.wav
+!output/.gitkeep
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OneDrive / OS
+Thumbs.db

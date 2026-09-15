@@ -1,0 +1,13 @@
+# Core runtime
+kokoro==0.9.4
+misaki==0.9.4
+phonemizer==3.4.0
+espeakng-loader==0.2.4
+nltk==3.10.3
+safetensors==0.8.0
+soundfile==0.14.0
+tokenizers==0.23.2
+
+# Tensor stack
+torch==2.11.0+cu128
+# CPU fallback:  torch==2.11.0     (ignore the +cu128 pin when installing CPU-only)

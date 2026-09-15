@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kokoro TTS Studio</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #0f1115; color: #e6e8ee;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid #23262e; background: #15181f;
+  }
+  header h1 { margin: 0; font-size: 20px; }
+  header small { color: #8b93a3; }
+  main { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+  .panel {
+    background: #15181f; border: 1px solid #23262e; border-radius: 12px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  textarea {
+    width: 100%; min-height: 140px; resize: vertical; background: #0f1115;
+    color: inherit; border: 1px solid #2a2f3a; border-radius: 8px; padding: 10px;
+    font: inherit; line-height: 1.5;
+  }
+  textarea:focus { outline: 2px solid #3b82f6; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #aab2c0; }
+  select, input[type=range] { background: #0f1115; color: inherit; }
+  select {
+    padding: 8px 10px; border: 1px solid #2a2f3a; border-radius: 8px; min-width: 220px;
+  }
+  button {
+    padding: 10px 22px; border: 0; border-radius: 8px; font: inherit; font-weight: 600;
+    background: #3b82f6; color: white; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  button.ghost { background: #23262e; color: #e6e8ee; }
+  .speedval { color: #8b93a3; font-variant-numeric: tabular-nums; }
+  audio { width: 100%; margin-top: 10px; }
+  .meta { color: #8b93a3; font-size: 13px; margin-top: 10px; }
+  .error { color: #f87171; font-size: 14px; margin-top: 10px; white-space: pre-wrap; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .chips button { font-size: 13px; padding: 6px 12px; background: #23262e; }
+  h2 { font-size: 15px; margin: 0 0 8px; color: #c9cfda; }
+  .list { list-style: none; padding: 0; margin: 0; font-size: 14px; }
+  .list li {
+    display: flex; justify-content: space-between; gap: 10px; padding: 6px 0;
+    border-bottom: 1px solid #1d2129;
+  }
+  .list a { color: #7aa2f7; text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kokoro TTS Studio</h1>
+  <small>Local voice narration on your GPU</small>
+</header>
+<main>
+  <div class="error" id="banner" style="display:none"></div>
+  <section class="panel">
+    <textarea id="text" placeholder="Paste a sentence, paragraph, or an entire chapter..."></textarea>
+    <div class="chips">
+      <button class="ghost" data-demo="Welcome to your new local text to speech studio. This voice was generated entirely on your own graphics card.">Demo sentence</button>
+      <button class="ghost" data-demo="Once upon a time, in a land far away, a small town librarian discovered a talking cat who only ever read science fiction.">Story sample</button>
+      <button class="ghost" data-demo="The findings suggest that early exposure to structured feedback improves retention. However, further research is needed before we draw broader conclusions.">Narration sample</button>
+    </div>
+    <div class="row">
+      <label>Voice
+        <select id="voice"></select>
+      </label>
+      <label style="flex:1; min-width:200px">
+        <span>Speed: <span class="speedval" id="speedval">1.00x</span></span>
+        <input type="range" id="speed" min="0.5" max="2" value="1" step="0.05">
+      </label>
+      <button id="go">Synthesize</button>
+    </div>
+    <div class="error" id="err"></div>
+    <audio id="player" controls></audio>
+    <div class="meta" id="meta"></div>
+  </section>
+
+  <section class="panel">
+    <h2>History</h2>
+    <ul class="list" id="files"></ul>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { voices: [] };
+
+const ENGINE_DOWN =
+  'Engine is not running. Close this tab and double-click "TTS Studio" to start it again.';
+
+function showBanner(msg) { const b = $('banner'); b.style.display = 'block'; b.textContent = msg; }
+function hideBanner() { $('banner').style.display = 'none'; }
+
+let sid = sessionStorage.getItem('tts_sid') || '';
+let ring = 0;
+let active = false;
+
+async function ping() {
+  if (!sid) return;
+  try {
+    const r = await fetch('/api/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sid }),
+    });
+    if (r.ok) active = true;
+    else if (active) showBanner(ENGINE_DOWN);
+  } catch (e) {
+    if (active) showBanner(ENGINE_DOWN);
+  }
+}
+
+function leave() {
+  if (!sid) return;
+  const url = '/api/leave?session_id=' + encodeURIComponent(sid);
+  if (!navigator.sendBeacon(url)) {
+    fetch(url, { method: 'POST' }).catch(() => {});
+  }
+}
+
+async function register() {
+  try {
+    const r = await fetch('/api/session', { method: 'GET' });
+    const d = await r.json();
+    sid = d.session_id || sid;
+    if (sid) sessionStorage.setItem('tts_sid', sid);
+    active = true;
+    hideBanner();
+    ring = setInterval(ping, 10000);
+  } catch (e) {
+    showBanner(ENGINE_DOWN);
+  }
+}
+
+window.addEventListener('pagehide', leave);
+window.addEventListener('beforeunload', leave);
+
+async function loadVoices() {
+  const r = await fetch('/api/voices');
+  const data = await r.json();
+  state.voices = data.voices;
+  const sel = $('voice');
+  state.voices.forEach((v, i) => {
+    const o = document.createElement('option');
+    o.value = v.id; o.textContent = v.label;
+    if (v.label.includes('Bella')) sel.selectedIndex = i;
+    sel.appendChild(o);
+  });
+  if (!Array.from(sel.options).some(o => o.selected)) sel.selectedIndex = 0;
+}
+
+async function refreshFiles() {
+  const r = await fetch('/api/files');
+  const files = (await r.json()).files || [];
+  const ul = $('files');
+  ul.innerHTML = '';
+  if (!files.length) {
+    ul.innerHTML = '<li>No clips yet.</li>';
+    return;
+  }
+  files.forEach((f) => {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = '/output/' + encodeURIComponent(f);
+    a.textContent = f;
+    const size = document.createElement('span');
+    const d = document.createElement('a');
+    d.href = a.href; d.download = f; d.textContent = 'Download';
+    size.style.color = '#8b93a3';
+    li.append(a, d);
+    ul.appendChild(li);
+  });
+}
+
+async function synth() {
+  const err = $('err');
+  err.textContent = '';
+  $('go').disabled = true;
+  $('go').textContent = 'Synthesizing...';
+  try {
+    const r = await fetch('/api/synth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: $('text').value,
+        voice: $('voice').value,
+        speed: parseFloat($('speed').value),
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Request failed.');
+    $('player').src = data.file;
+    $('meta').textContent = 'Saved: ' + data.file.replace('/output/', '') +
+      '  (' + data.duration + 's)';
+    refreshFiles();
+  } catch (e) {
+    err.textContent = e.message;
+  } finally {
+    $('go').disabled = false;
+    $('go').textContent = 'Synthesize';
+  }
+}
+
+$('go').addEventListener('click', synth);
+$('speed').addEventListener('input', () => {
+  $('speedval').textContent = parseFloat($('speed').value).toFixed(2) + 'x';
+});
+document.querySelectorAll('[data-demo]').forEach((b) => {
+  b.addEventListener('click', () => { $('text').value = b.dataset.demo; $('text').focus(); });
+});
+
+loadVoices();
+refreshFiles();
+register();
+</script>
+</body>
+</html>
