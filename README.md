@@ -93,21 +93,95 @@ labels lives in `static/index.html`; select one via the dropdown in the UI.
 
 ```
 free-tts-studio/
-├── app.py               # server + synthesis engine (stdlib HTTP)
-├── g2p_nospacy.py       # spaCy-free G2P shim (NLTK-based)
-├── static/index.html    # single-file web UI
-├── run.bat / run.ps1    # launchers (double-click)
+├── app.py                 # server + synthesis engine (stdlib HTTP)
+├── g2p_nospacy.py         # spaCy-free G2P shim (NLTK-based)
+├── static/index.html      # single-file web UI
+├── run.bat / run.ps1      # launchers (double-click)
 ├── update.bat / update.ps1
-├── requirements.txt     # pinned deps
+├── requirements.txt       # pinned deps
+├── bridge/                # OPTIONAL: experimental local API sidecar
+│   ├── bridge.py          # stdlib HTTP server, async job queue
+│   ├── auth.py            # bearer-token check
+│   └── jobs.py            # in-memory job store + JSONL audit log
 ├── README.md
+├── SECURITY.md
 └── LICENSE
 ```
+
+## Experimental: local API mode
+
+> **Status:** experimental, no stability guarantee. The endpoint contract
+> may change between releases. Not recommended for anything you'd call
+> "production". Default-off.
+
+When you set `TTS_ENABLE_BRIDGE=1` and launch with `--no-auto-stop`, the
+launcher also starts a small stdlib HTTP sidecar (`bridge/bridge.py`) on
+`127.0.0.1:7861`. It accepts the same `{text, voice, speed}` payload the
+browser UI uses, plus a job-queue / poll interface:
+
+```
+POST /v1/synthesize              -> 202 + job_id  (async; poll later)
+POST /v1/synthesize?wait=true    -> 200 + result  (sync, max 300s)
+GET  /v1/jobs/<id>               -> status / file / error
+GET  /v1/files/<name>            -> streamed WAV
+GET  /healthz                    -> engine liveness
+```
+
+All routes (except `/healthz`) require `Authorization: Bearer <key>`.
+The launcher generates a fresh token on first run and saves it to
+`bridge.key` (kept out of git by `.gitignore`).
+
+### Quick start
+
+```bat
+:: cmd.exe
+set TTS_ENABLE_BRIDGE=1
+run.bat --no-auto-stop
+```
+
+```powershell
+# PowerShell
+$env:TTS_ENABLE_BRIDGE = '1'
+.\run.ps1 --no-auto-stop
+```
+
+The launcher prints the bridge URL and a masked key. To use it from
+another machine on your LAN, set `TTS_BRIDGE_HOST=0.0.0.0` before
+launching, and terminate TLS in front (e.g. via `cloudflared`):
+
+```
+cloudflared tunnel --url http://127.0.0.1:7861 --no-autoupdate
+```
+
+### Why `--no-auto-stop` is mandatory in bridge mode
+
+The engine has a built-in watchdog that shuts it down after 60 s if no
+browser tab is open. The bridge prevents this by registering its own
+session and heartbeating the engine, but you must also confirm the
+intent explicitly with `--no-auto-stop` so a stray `run.bat` invocation
+can't accidentally keep your engine alive indefinitely.
+
+### Security
+
+- The engine itself stays loopback-bound at `127.0.0.1:7860` and is never
+  reachable from the network. The bridge is the only thing exposed.
+- Tokens shorter than 24 characters are refused at startup.
+- Tokens are compared with `hmac.compare_digest` (constant time).
+- Per-IP rate limit (60 req/min default); 1 MiB body cap.
+- A JSONL audit log (`bridge-audit.log`) records job transitions; it
+  never contains the API key, the text payload, or the audio.
+- Do **not** expose the bridge to the public internet without TLS in
+  front. See `SECURITY.md`.
+
+If you don't need the API, leave `TTS_ENABLE_BRIDGE` unset — the engine
+behaves exactly as it always has.
 
 ## Model & license
 
 - [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) — model + voices by
   hexgrad; Apache-2.0 (model weights: see the Kokoro repo for exact terms).
-- This project's own code (server + shim + UI) is **MIT** — see `LICENSE`.
+- This project's own code (server + shim + UI + optional bridge) is
+  **MIT** — see `LICENSE`.
 
 MIT License
 

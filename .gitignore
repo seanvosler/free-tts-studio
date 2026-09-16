@@ -21,6 +21,11 @@ output/*.wav
 # Logs
 *.log
 
+# Local secrets / state for the optional experimental bridge
+.env
+bridge.key
+bridge-audit.log
+
 # IDE
 .vscode/
 .idea/
