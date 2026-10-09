@@ -385,6 +385,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if job is None:
                 send_error(self, 404, 'unknown job id')
                 return
+            # `?wait=true` blocks until the job is terminal, so callers can
+            # do an async submit + single blocking poll instead of round-tripping.
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            if qs.get('wait', [''])[0].lower() in ('1', 'true', 'yes'):
+                finished = job._event.wait(timeout=WAIT_TIMEOUT)
+                if not finished:
+                    json_response(self, {
+                        'job_id': job.id,
+                        'status': 'timeout',
+                        'message': 'still processing or failed',
+                        'poll_url': f'/v1/jobs/{job.id}',
+                    }, 504)
+                    return
             json_response(self, job.to_dict())
             return
 
