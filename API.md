@@ -335,6 +335,16 @@ curl -sS -H "Authorization: Bearer $KEY" \
 
 `status` is one of: `queued`, `running`, `done`, `failed`.
 
+You can also block on an async job by appending `?wait=true` (or `?wait=1`):
+
+```bash
+curl -sS -H "Authorization: Bearer $KEY" \
+  "https://voice.sean.co/v1/jobs/5f1c8a3b9e4d2?wait=true"
+```
+
+Returns the same payload as above, or a `504` with `poll_url` if it exceeds
+`TTS_BRIDGE_WAIT_TIMEOUT` (default 300s).
+
 ### `GET /v1/jobs?limit=N` — auth
 
 List recent jobs (newest first; default 100, max 500).
@@ -355,7 +365,11 @@ Returns `{"voices": [{"label": "US - Heart (light)", "id": "af_heart"}, ...]}`. 
 
 ### `GET /v1/files` — auth
 
-List WAVs in the engine's `output/` directory (newest first).
+List WAVs in the bridge's output directory (newest first). This is the
+**shared** `TTS_OUTPUT_DIR` that both the Kokoro engine and the Kitten
+engine write to, so this list contains files from both engines. Use the
+filename prefix or `GET /v1/kitten/jobs/<id>` to identify which engine
+produced a given file.
 
 ### `GET /v1/files/<name>` — auth
 
@@ -400,14 +414,32 @@ JSON for the dashboard widget.
 
 ## Voice IDs
 
+### Kokoro (English only) — used by `/v1/synthesize`
+
 | Accent | Voices |
 |---|---|
 | US female (af_) | `af_heart`, `af_alloy`, `af_aoede`, `af_bella`, `af_jessica`, `af_kore`, `af_nicole`, `af_nova`, `af_river`, `af_sarah`, `af_sky` |
-| US male (am_)   | `af_adam` → wait that's `am_adam`. Full list: `am_adam`, `am_echo`, `am_eric`, `am_fenrir`, `am_liam`, `am_michael`, `am_onyx`, `am_puck`, `am_santa` |
+| US male (am_)   | `am_adam`, `am_echo`, `am_eric`, `am_fenrir`, `am_liam`, `am_michael`, `am_onyx`, `am_puck`, `am_santa` |
 | UK female (bf_) | `bf_alice`, `bf_emma`, `bf_isabella`, `bf_lily` |
 | UK male (bm_)   | `bm_daniel`, `bm_fable`, `bm_george`, `bm_lewis` |
 
-Default voice (when omitted): `af_heart` (US - Heart, light).
+Default voice (when omitted): `af_heart` (US - Heart, light). 28 voices total.
+
+### KittenTTS-2 (multilingual) — used by `/v1/kitten/synthesize`
+
+**38 named speakers:** `Bella`, `Jasper`, `Luna`, `Bruno`, `Rosie`, `Hugo`, `Kiki`,
+`Leo`, `Matthew`, `Elliot`, `Willow`, `Dolores`, `Victor`, `Dante`, `Alfred`,
+`Saoirse`, `Claire`, `Raven`, `Marcus`, `Herbert`, `Diana`, `Laurence`, `Maeve`,
+`Walter`, `Edith`, `Miles`, `Grace`, `Reginald`, `Iris`, `Frank`, `Serena`,
+`Julian`, `Eleanor`, `Otis`, `Vincent`, `Martha`, `Sable`, `Victoria`.
+
+**9 language-accent voices** (the voice itself carries the accent; pass
+`normalize: false` for non-English text):
+`Arabic`, `Chinese`, `French`, `German`, `Hindi`, `Italian`, `Portuguese`,
+`Russian`, `Spanish`.
+
+Default voice (when omitted): `Bella`. 47 voices total. List them at
+runtime with `GET /v1/kitten/voices`.
 
 ## Common workflows
 
