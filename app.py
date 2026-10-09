@@ -13,6 +13,7 @@ Flags: --no-auto-stop   keep the engine alive with no browser tabs open.
 import json
 import mimetypes
 import os
+import re
 import sys
 import threading
 import time
@@ -37,7 +38,11 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 HOST = '127.0.0.1'
 PORT = 7860
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(ROOT, 'output')
+# Output directory for synthesized WAVs. Override with the TTS_OUTPUT_DIR
+# environment variable (e.g. to point at a cloud-synced folder).
+# An empty TTS_OUTPUT_DIR falls back to the default <repo>/output.
+_env_out = os.environ.get('TTS_OUTPUT_DIR', '').strip()
+OUTPUT_DIR = os.path.abspath(_env_out) if _env_out else os.path.join(ROOT, 'output')
 STATIC_DIR = os.path.join(ROOT, 'static')
 
 VOICES = [
@@ -148,7 +153,46 @@ def watchdog_loop(server):
             return
 
 
-def synthesize(text, voice_id, speed):
+_FILENAME_KEEP = re.compile(r'[^A-Za-z0-9._\- ]')
+
+
+def _sanitize_filename(name):
+    """Turn a caller-supplied name into a safe `.wav` basename.
+
+    - Strips any user-supplied extension (the engine always writes WAV).
+    - Rejects path separators, traversal, NUL bytes, control chars,
+      and anything that isn't [A-Za-z0-9._- ].
+    - Trims to 80 chars before adding the suffix to leave headroom.
+    - If a file with the resulting name already exists, appends _2, _3, ...
+    Returns the final basename, or None if the input is unusable.
+    """
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    if not name or len(name) > 120:
+        return None
+    # Drop the last extension (if any) -- engine output is always .wav.
+    base = name.rsplit('.', 1)[0] if '.' in name else name
+    if not base or any(c in base for c in ('/', '\\', '..', '\x00')):
+        return None
+    base = _FILENAME_KEEP.sub('_', base).strip('._- ')
+    if not base:
+        return None
+    base = base[:80]
+    candidate = base + '.wav'
+    if os.path.isdir(OUTPUT_DIR):
+        i = 2
+        final = candidate
+        while os.path.exists(os.path.join(OUTPUT_DIR, final)):
+            final = f'{base}_{i}.wav'
+            i += 1
+            if i > 9999:
+                return None
+        candidate = final
+    return candidate
+
+
+def synthesize(text, voice_id, speed, output_file_name=None):
     lang = 'a' if voice_id.startswith('a') else 'b'
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -165,10 +209,15 @@ def synthesize(text, voice_id, speed):
             raise RuntimeError('No audio produced.')
         audio = torch.cat(chunks).cpu().numpy().astype(np.float32)
 
-    fname = f"{time.strftime('%Y%m%d_%H%M%S')}_{voice_id}.wav"
+    if output_file_name:
+        fname = _sanitize_filename(output_file_name)
+        if not fname:
+            raise ValueError(f'invalid output_file_name: {output_file_name!r}')
+    else:
+        fname = f"{time.strftime('%Y%m%d_%H%M%S')}_{voice_id}.wav"
     path = os.path.join(OUTPUT_DIR, fname)
     sf.write(path, audio, SAMPLE_RATE, subtype='PCM_16')
-    log(f'Synthesized {len(audio) / SAMPLE_RATE:.1f}s -> output/{fname}')
+    log(f'Synthesized {len(audio) / SAMPLE_RATE:.1f}s -> {fname}  (dir: {OUTPUT_DIR})')
     return fname, audio
 
 
@@ -261,7 +310,14 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(length) or b'{}')
             text = str(req.get('text', ''))
             voice = str(req.get('voice', VOICES[0][1]))
-            speed = float(req.get('speed', 1.0))
+            try:
+                speed = float(req.get('speed', 1.0))
+            except (TypeError, ValueError):
+                self._json({'error': 'speed must be a number'}, 400)
+                return
+            custom_name = req.get('output_file_name')
+            if custom_name is not None:
+                custom_name = str(custom_name).strip() or None
             if not text.strip():
                 self._json({'error': 'Please enter some text to narrate.'}, 400)
                 return
@@ -270,8 +326,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'error': f'Unknown voice: {voice}'}, 400)
                 return
             speed = min(max(speed, 0.5), 2.0)
-            fname, audio = synthesize(text, voice, speed)
-            self._json({'file': f'/output/{fname}', 'duration': round(len(audio) / SAMPLE_RATE, 2)})
+            fname, audio = synthesize(text, voice, speed, output_file_name=custom_name)
+            self._json({
+                'file': f'/output/{fname}',
+                'duration': round(len(audio) / SAMPLE_RATE, 2),
+                'filename': fname,
+            })
+        except ValueError as e:
+            self._json({'error': str(e)}, 400)
         except RuntimeError as e:
             self._json({'error': str(e)}, 500)
 

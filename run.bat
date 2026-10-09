@@ -19,6 +19,9 @@ if not exist ".venv\Scripts\python.exe" (
 
 set NLTK_ALLOW_PROXIED_URLOPEN=1
 
+rem Where synthesized WAVs land. Defaults to <repo>\output if unset.
+if not defined TTS_OUTPUT_DIR set "TTS_OUTPUT_DIR=G:\My Drive\voicesseancoTTSfiles"
+
 rem --- Optional bridge mode (experimental) ----------------------------------
 set "BRIDGE_FLAGS="
 if /I "%TTS_ENABLE_BRIDGE%"=="1" (
