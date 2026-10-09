@@ -1,0 +1,23 @@
+# Cloudflare named-tunnel configuration for the Free TTS Studio bridge.
+#
+# INSTRUCTIONS:
+#   1. Replace `voice.yourdomain.com` below with your actual subdomain
+#      (e.g. `tts.example.com`). The domain must already be on Cloudflare
+#      (you said you have one).
+#   2. Save this file as  `%USERPROFILE%\.cloudflared\config.yml`
+#      (i.e. `C:\Users\me\.cloudflared\config.yml`).
+#   3. Run the steps in `TUNNEL-SETUP.md` to log in to Cloudflare,
+#      create the tunnel, and add the DNS route.
+
+tunnel: tts-bridge
+credentials-file: C:\Users\me\.cloudflared\tts-bridge.json
+
+ingress:
+  # Public hostname -> bridge on localhost
+  - hostname: voice.yourdomain.com
+    service: http://localhost:7861
+    originRequest:
+      # TTS requests can take a few seconds; raise the timeout.
+      noTLSVerify: true
+  # Catch-all 404 (required by cloudflared)
+  - service: http_status:404
